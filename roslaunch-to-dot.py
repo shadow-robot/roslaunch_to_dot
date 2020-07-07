@@ -46,6 +46,7 @@ from argparse import ArgumentParser
 from collections import namedtuple
 import xml.etree.ElementTree as ET
 from os.path import abspath, exists, basename, splitext, sep, dirname
+import os
 
 import roslib
 import rospkg
@@ -76,7 +77,8 @@ Node = namedtuple("Node", [
     "name",  # The name of the ROS node
     "dotNodeName",  # The name for the corresponding dot node
     "argSubs",  # The package that contains the rosparam file
-    "isTestNode"])  # True if this is a test node, False otherwise
+    "isTestNode",  # True if this is a test node, False otherwise
+    "args"])
 
 # Create a named tuple to store attributes pertaining to a rosparam file
 RosParam = namedtuple("RosParamFile", [
@@ -93,6 +95,23 @@ PackageItems = namedtuple("PackageItems", [
     "nodes",  # The list of nodes contains in this package
     "rosParamFiles",  # The list of rosparam files contained in this package
     ])
+
+
+def resolve_ros_launch(package_name, launch_file_filename):
+    launch_dir = os.path.join(
+        roslib.packages.get_pkg_dir(package_name),
+        "launch")
+
+    launch_file_paths = []
+    for (parent_dir, child_dirs, filenames) in os.walk(launch_dir):
+        for filename in filenames:
+            if filename == launch_file_filename:
+                launch_file_paths.append(
+                    os.path.join(parent_dir, launch_file_filename))
+    # expect exactly one launch file
+    (launch_file_path, ) = launch_file_paths
+
+    return launch_file_path
 
 
 class LaunchFile:
@@ -128,6 +147,8 @@ class LaunchFile:
     TypeAttribute = "type"
     UnlessAttribute = "unless"
     ValueAttribute = "value"
+    
+    ArgsAttribute = "args"
 
     # Identifiers used as substitution arguments within a launch
     # file, e.g,. $(find package)
@@ -754,7 +775,28 @@ class LaunchFile:
                 else:
                     # Node is disabled (i.e., if=false, or unless=true)
                     if node is not None:
-                        self.__nodes.append(node)
+                        if (node.package == "sr_utilities_common" and
+                        node.nodeType == "timed_roslaunch.sh"):
+                            args = node.args.split()
+                            launch_pacakge = args[1]
+                            launch_file = args[2]
+
+                            launch_file_path = resolve_ros_launch(
+                                launch_pacakge,
+                                launch_file)
+                            # TODO check for cycles, etc. as done in
+                            # __parseIncludeTag
+                            launchFile =  LaunchFile(
+                                [],
+                                launch_file_path,
+                                includeArgs=[],
+                                overrideArgs=[],
+                                ancestors=[])
+
+                            self.__includes.append(launchFile)
+
+                        else:
+                            self.__nodes.append(node)
             elif child.tag == self.RosParamTag:
                 try:
                     self.__parseRosParam(child)
@@ -889,12 +931,15 @@ class LaunchFile:
         pkg = self.__getAttribute(node, self.PkgAttribute)
         nodeType = self.__getAttribute(node, self.TypeAttribute)
         name = self.__getAttribute(node, self.NameAttribute)
+        args = node.attrib.get(self.ArgsAttribute) # not all nodes have args
 
         # Any of these attributes may have substitution arguments
         # that need to be resolved
         pkg = self.__resolveText(pkg)
         nodeType = self.__resolveText(nodeType)
         name = self.__resolveText(name)
+        if args is not None:
+            args = self.__resolveText(args)
 
         # Check for rosparams specified under the node tag
         self.__findRosParams(node)
@@ -922,7 +967,7 @@ class LaunchFile:
         dotNodeName = "node_%s_%s_%s" % (pkg, nodeType, name)
 
         # False means this is not a test node
-        return Node(self, pkg, nodeType, name, dotNodeName, argSubs, False)
+        return Node(self, pkg, nodeType, name, dotNodeName, argSubs, False, args)
 
     def __findRosParams(self, element):
         '''Find any and all rosparam elements specified under the given
@@ -1025,7 +1070,8 @@ class LaunchFile:
         dotNodeName = "node_%s_%s_%s" % (pkg, nodeType, name)
 
         # True means this is a test node
-        return Node(self, pkg, nodeType, name, dotNodeName, argSubs, True)
+        args = "" # Just a place-holder.
+        return Node(self, pkg, nodeType, name, dotNodeName, argSubs, True, args))
 
     def __parseGroupTag(self, group):
         '''Parse the group tag from a launch file.

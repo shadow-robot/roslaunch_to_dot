@@ -1071,7 +1071,7 @@ class LaunchFile:
 
         # True means this is a test node
         args = "" # Just a place-holder.
-        return Node(self, pkg, nodeType, name, dotNodeName, argSubs, True, args))
+        return Node(self, pkg, nodeType, name, dotNodeName, argSubs, True, args)
 
     def __parseGroupTag(self, group):
         '''Parse the group tag from a launch file.
